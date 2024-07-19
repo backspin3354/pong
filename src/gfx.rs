@@ -6,6 +6,7 @@ pub struct Color {
     pub b: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct Rect {
     pub position: glam::Vec3,
     pub size: glam::Vec2,

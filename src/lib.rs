@@ -2,19 +2,30 @@ use std::sync::Arc;
 
 mod gfx;
 
+mod ball;
+mod paddle;
+
+use ball::Ball;
 use gfx::{Color, Rect, Renderer};
 use glam::{Vec2, Vec3};
+use paddle::Paddle;
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
     event::WindowEvent,
     event_loop::ActiveEventLoop,
+    keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowAttributes, WindowId},
 };
 
 pub struct State {
     window: Option<Arc<Window>>,
     renderer: Option<gfx::Renderer>,
+
+    ball: ball::Ball,
+
+    left_paddle: paddle::Paddle,
+    right_paddle: paddle::Paddle,
 }
 
 impl Default for State {
@@ -22,6 +33,17 @@ impl Default for State {
         Self {
             window: None,
             renderer: None,
+
+            left_paddle: paddle::Paddle {
+                pos: Vec2::new(-0.8, 0.0),
+                ..Default::default()
+            },
+            right_paddle: paddle::Paddle {
+                pos: Vec2::new(0.8, 0.0),
+                ..Default::default()
+            },
+
+            ball: ball::Ball::new(),
         }
     }
 }
@@ -38,37 +60,7 @@ impl ApplicationHandler for State {
         let window = event_loop.create_window(attributes).unwrap();
 
         let window_arc = Arc::new(window);
-        let mut renderer = Renderer::new(window_arc.clone());
-
-        renderer.batch_rects(&[
-            Rect {
-                position: Vec3::new(-0.8, 0.0, 0.0),
-                size: Vec2::new(0.02, 0.1),
-                color: Color {
-                    r: 1.0,
-                    g: 1.0,
-                    b: 1.0,
-                },
-            },
-            Rect {
-                position: Vec3::new(0.8, 0.0, 0.0),
-                size: Vec2::new(0.02, 0.1),
-                color: Color {
-                    r: 1.0,
-                    g: 1.0,
-                    b: 1.0,
-                },
-            },
-            Rect {
-                position: Vec3::new(0.0, 0.0, 0.0),
-                size: Vec2::new(0.02, 0.02),
-                color: Color {
-                    r: 1.0,
-                    g: 1.0,
-                    b: 1.0,
-                },
-            },
-        ]);
+        let renderer = Renderer::new(window_arc.clone());
 
         self.window = Some(window_arc);
         self.renderer = Some(renderer);
@@ -91,6 +83,19 @@ impl ApplicationHandler for State {
                             renderer.resize(new_size.width, new_size.height);
                         }
                     }
+                    WindowEvent::KeyboardInput { event, .. } => {
+                        if let PhysicalKey::Code(code) = event.physical_key {
+                            match code {
+                                KeyCode::KeyW => {
+                                    self.left_paddle.moving_up = event.state.is_pressed();
+                                }
+                                KeyCode::KeyS => {
+                                    self.left_paddle.moving_down = event.state.is_pressed();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -98,7 +103,71 @@ impl ApplicationHandler for State {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.left_paddle.update();
+        self.right_paddle.update();
+        self.ball.update();
+
+        if self.ball.dir.x > 0.0 {
+            self.right_paddle.moving_up =
+                self.right_paddle.pos.y + Paddle::HEIGHT < self.ball.pos.y;
+            self.right_paddle.moving_down =
+                self.right_paddle.pos.y - Paddle::HEIGHT > self.ball.pos.y;
+        } else {
+            self.right_paddle.moving_up = false;
+            self.right_paddle.moving_down = false;
+        }
+
+        {
+            if self.ball.pos.y >= 1.0 - Ball::SIZE || self.ball.pos.y <= -1.0 + Ball::SIZE {
+                if self.ball.pos.y.signum() == self.ball.dir.y.signum() {
+                    self.ball.dir.y *= -1.0;
+                }
+            }
+
+            fn collide(paddle: &Paddle, ball: &mut Ball) {
+                if if paddle.pos.x < 0.0 {
+                    ball.pos.x <= paddle.pos.x + Paddle::WIDTH + Ball::SIZE
+                        && ball.pos.x >= paddle.pos.x - Paddle::WIDTH
+                } else {
+                    ball.pos.x >= paddle.pos.x - (Paddle::WIDTH + Ball::SIZE)
+                        && ball.pos.x <= paddle.pos.x + Paddle::WIDTH
+                } {
+                    if ball.pos.y <= paddle.pos.y + Paddle::HEIGHT + Ball::SIZE
+                        && ball.pos.y >= paddle.pos.y - Paddle::HEIGHT - Ball::SIZE
+                    {
+                        ball.dir = (ball.pos - paddle.pos).normalize();
+                        ball.speed += 0.002;
+                    }
+                }
+            }
+
+            collide(&self.left_paddle, &mut self.ball);
+
+            collide(&self.right_paddle, &mut self.ball);
+        }
+
+        if self.ball.pos.x.abs() > 1.0 + Ball::SIZE {
+            self.ball.pos = Vec2::ZERO;
+            self.ball.dir = Vec2::new(-self.ball.dir.x.signum(), 0.0);
+            self.ball.speed = 0.01;
+        }
+
         if let Some(renderer) = self.renderer.as_mut() {
+            renderer.batch_rects(&[
+                gfx::Rect {
+                    position: Vec3::ZERO,
+                    size: Vec2::new(0.005, 1.0),
+                    color: gfx::Color {
+                        r: 0.5,
+                        g: 0.5,
+                        b: 0.5,
+                    },
+                },
+                self.left_paddle.rect(),
+                self.right_paddle.rect(),
+                self.ball.rect(),
+            ]);
+
             renderer.draw();
         }
     }
